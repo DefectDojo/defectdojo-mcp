@@ -215,14 +215,90 @@ async def test_import_rejects_large_and_empty_files(rw: Settings, scan_dir: Path
     assert "not a regular file" in folder
 
 
-async def test_import_without_import_dirs_at_root(monkeypatch: pytest.MonkeyPatch, mock_api: respx.Router) -> None:
-    monkeypatch.chdir("/")
+@pytest.mark.parametrize("cwd_has_report", [True, False])
+async def test_import_fails_closed_without_import_dirs(
+    monkeypatch: pytest.MonkeyPatch, scan_dir: Path, mock_api: respx.Router, cwd_has_report: bool
+) -> None:
+    # No fallback to the working directory, even when the file sits right there.
+    monkeypatch.chdir(scan_dir if cwd_has_report else "/")
+    route = mock_api.post("/import-scan/").respond(201, json=IMPORT_RESPONSE)
     settings = make_settings(allow_writes=True)
     async with connect(settings) as client:
         text = error_text(
-            await call(client, "import_scan", {"scan_type": "x Scan", "file_path": "etc/hosts", "engagement_id": 1})
+            await call(client, "import_scan", {"scan_type": "x Scan", "file_path": "zap.xml", "engagement_id": 1})
+        )
+        ok = await call(
+            client,
+            "import_scan",
+            {"scan_type": "x Scan", "file_content_base64": "eA==", "file_name": "a.json", "engagement_id": 1},
         )
     assert "DEFECTDOJO_IMPORT_DIRS" in text
+    assert not ok.is_error
+    assert route.call_count == 1
+
+
+@pytest.mark.parametrize("root", ["home", "fs_root"])
+async def test_import_refuses_home_and_filesystem_root(mock_api: respx.Router, root: str) -> None:
+    path = Path.home().resolve() if root == "home" else Path("/")
+    settings = make_settings(allow_writes=True, import_dirs=(path,))
+    target = str(path / "anything.json")
+    async with connect(settings) as client:
+        text = error_text(
+            await call(client, "import_scan", {"scan_type": "x Scan", "file_path": target, "engagement_id": 1})
+        )
+    assert "home folder are not allowed" in text
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [".env", ".hidden/report.json", "sub/.secret/report.json", "sub/.dotfile.json"],
+)
+async def test_import_rejects_hidden_paths(rw: Settings, scan_dir: Path, mock_api: respx.Router, relative: str) -> None:
+    target = scan_dir / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("TOP-SECRET-CONTENT")
+    route = mock_api.post("/import-scan/").respond(201, json=IMPORT_RESPONSE)
+    async with connect(rw) as client:
+        by_relative = error_text(
+            await call(client, "import_scan", {"scan_type": "x Scan", "file_path": relative, "engagement_id": 1})
+        )
+        by_absolute = error_text(
+            await call(client, "import_scan", {"scan_type": "x Scan", "file_path": str(target), "engagement_id": 1})
+        )
+    for text in (by_relative, by_absolute):
+        assert "hidden" in text
+        assert "TOP-SECRET-CONTENT" not in text
+    assert route.call_count == 0
+
+
+async def test_import_rejects_symlink_to_hidden_file_inside_root(
+    rw: Settings, scan_dir: Path, mock_api: respx.Router
+) -> None:
+    secret = scan_dir / ".ssh" / "id_ed25519"
+    secret.parent.mkdir()
+    secret.write_text("PRIVATE-KEY-MATERIAL")
+    (scan_dir / "innocent.json").symlink_to(secret)
+    async with connect(rw) as client:
+        text = error_text(
+            await call(client, "import_scan", {"scan_type": "x Scan", "file_path": "innocent.json", "engagement_id": 1})
+        )
+    assert "hidden" in text
+    assert "PRIVATE-KEY-MATERIAL" not in text
+
+
+async def test_import_errors_never_echo_file_contents(rw: Settings, scan_dir: Path, mock_api: respx.Router) -> None:
+    (scan_dir / "big.json").write_text("SECRET-" * 400)
+    async with connect(rw) as client:
+        text = error_text(
+            await call(client, "import_scan", {"scan_type": "x Scan", "file_path": "big.json", "engagement_id": 1})
+        )
+        bad64 = error_text(
+            await call(
+                client, "import_scan", {"scan_type": "x Scan", "file_content_base64": "SECRET!!", "engagement_id": 1}
+            )
+        )
+    assert "SECRET" not in text
+    assert "SECRET" not in bad64
 
 
 async def test_import_base64_sanitizes_name(rw: Settings, mock_api: respx.Router) -> None:

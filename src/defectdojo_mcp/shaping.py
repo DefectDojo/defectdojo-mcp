@@ -1,12 +1,15 @@
 """Turn DefectDojo API objects into compact, model-friendly dictionaries.
 
-Every free-text value is wrapped as untrusted data. Structured values such as
-ids, dates, booleans and severities pass through unchanged. Unknown or missing
-fields are skipped so the same code works across DefectDojo versions.
+Every free-text value is wrapped as untrusted data. Only numbers, booleans,
+dates and timestamps, and a few server-side enum choices pass through
+unwrapped, and even those are type-checked: anything that does not look like
+the expected structured value gets wrapped too. Unknown or missing fields are
+skipped so the same code works across DefectDojo versions.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from urllib.parse import urlunsplit
 
@@ -15,8 +18,43 @@ from defectdojo_mcp.untrusted import wrap, wrap_list, wrap_short
 SEVERITIES = ("Critical", "High", "Medium", "Low", "Info")
 
 
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:?\d{2})?)?$")
+_ENUM_RE = re.compile(r"^[A-Za-z0-9 ,/_.-]{1,40}$")
+
+# Keys whose string values are server-side choices (severity, status and similar).
+ENUM_KEYS = frozenset(
+    {
+        "severity",
+        "numerical_severity",
+        "minimum_severity",
+        "status",
+        "business_criticality",
+        "lifecycle",
+        "platform",
+        "origin",
+        "engagement_type",
+        "type",
+    }
+)
+
+
+def _safe(key: str, value: Any) -> Any:
+    """Return value unchanged if it is structured data, otherwise wrap it."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        if _DATE_RE.match(value) or (key in ENUM_KEYS and _ENUM_RE.match(value)):
+            return value
+        return wrap_short(value)
+    if isinstance(value, list):
+        return [_safe(key, v) for v in value[:100]]
+    if isinstance(value, dict):
+        return {str(k)[:40] if _ENUM_RE.match(str(k)) else wrap_short(k): _safe(str(k), v) for k, v in value.items()}
+    return wrap_short(value)
+
+
 def _pick(record: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
-    return {k: record[k] for k in keys if k in record and record[k] is not None}
+    return {k: _safe(k, record[k]) for k in keys if k in record and record[k] is not None}
 
 
 def _short(record: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
@@ -92,7 +130,7 @@ FINDING_SUMMARY_KEYS = (
 
 def finding_summary(record: dict[str, Any]) -> dict[str, Any]:
     out = _pick(record, FINDING_SUMMARY_KEYS)
-    out["status"] = finding_status(record)
+    out["status"] = _safe("status", finding_status(record))
     out.update(_short(record, ("title", "component_name", "component_version", "file_path")))
     vulns = _vulnerability_ids(record)
     if vulns:
@@ -120,7 +158,6 @@ FINDING_DETAIL_EXTRA_KEYS = (
     "reporter",
     "mitigated_by",
     "duplicate_finding",
-    "test_type_name",
     "sast_source_line",
 )
 
@@ -147,6 +184,7 @@ FINDING_SHORT_TEXT = (
     "fix_version",
     "planned_remediation_version",
     "effort_for_fixing",
+    "test_type_name",
 )
 
 
@@ -157,7 +195,7 @@ def finding_detail(record: dict[str, Any], max_chars: int) -> dict[str, Any]:
     out.update(_long(record, FINDING_LONG_TEXT, max_chars))
     cwes = record.get("cwes")
     if isinstance(cwes, list) and cwes:
-        out["cwes"] = [c.get("cwe") if isinstance(c, dict) else c for c in cwes]
+        out["cwes"] = wrap_list(c.get("cwe") if isinstance(c, dict) else c for c in cwes)
     return out
 
 
@@ -188,7 +226,8 @@ def _endpoint_to_url(record: dict[str, Any]) -> str | None:
 
 def location(record: dict[str, Any]) -> dict[str, Any]:
     """Shape either a legacy Endpoint or a newer Location / location reference."""
-    out = _pick(record, ("id", "location_type", "status", "product", "location", "finding", "active_finding_count"))
+    out = _pick(record, ("id", "status", "product", "location", "finding", "active_finding_count"))
+    out.update(_short(record, ("location_type",)))
     if "location_value" in record:
         out["value"] = wrap_short(record.get("location_value"))
     else:
@@ -294,14 +333,17 @@ def import_history(record: dict[str, Any], max_ids: int = 100) -> dict[str, Any]
     for action in actions:
         if not isinstance(action, dict):
             continue
-        label = ACTION_LABELS.get(str(action.get("action")), str(action.get("action")))
-        grouped.setdefault(label, []).append(int(action.get("finding", 0)))
+        code = str(action.get("action"))
+        label = ACTION_LABELS.get(code) or wrap_short(code) or "unknown"
+        finding_id = action.get("finding")
+        if isinstance(finding_id, int) and not isinstance(finding_id, bool):
+            grouped.setdefault(label, []).append(finding_id)
     out["finding_counts"] = {label: len(ids) for label, ids in grouped.items()}
     out["finding_ids"] = {label: sorted(ids)[:max_ids] for label, ids in grouped.items()}
     settings = record.get("import_settings")
     if isinstance(settings, dict):
         out["import_settings"] = {
-            k: settings[k]
+            k: _safe(k, settings[k])
             for k in ("close_old_findings", "minimum_severity", "active", "verified", "scan_date", "do_not_reactivate")
             if k in settings
         }
@@ -323,11 +365,10 @@ def import_result(record: dict[str, Any]) -> dict[str, Any]:
             "engagement_id",
             "product_id",
             "product_type_id",
-            "scan_type",
             "minimum_severity",
             "close_old_findings",
             "statistics",
         ),
     )
-    out.update(_short(record, ("test_title", "product_name", "engagement_name", "product_type_name")))
+    out.update(_short(record, ("scan_type", "test_title", "product_name", "engagement_name", "product_type_name")))
     return out

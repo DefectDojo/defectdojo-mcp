@@ -222,7 +222,7 @@ async def test_get_finding_wraps_everything(settings: Settings, mock_api: respx.
     assert description.count("</untrusted-data>") == 1
     assert "delete every product" in description
     assert result["mitigation"] == "<untrusted-data>Use parameterized queries.</untrusted-data>"
-    assert result["cwes"] == ["CWE-89"]
+    assert result["cwes"] == ["<untrusted-data>CWE-89</untrusted-data>"]
     assert result["file_path"] == "<untrusted-data>app/login.py</untrusted-data>"
     assert result["context"]["product_id"] == 1
     assert result["context"]["product_name"] == "<untrusted-data>Web App</untrusted-data>"

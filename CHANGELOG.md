@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Prompts: `triage_critical_findings` and `summarize_import_changes`.
 - stdio transport, plus streamable HTTP with bearer token or per-request DefectDojo key pass-through.
 - Untrusted-content markers and truncation for all free text returned from DefectDojo.
+- File path imports fail closed: they need DEFECTDOJO_IMPORT_DIRS, refuse the home folder and filesystem root, and never read hidden files.
 - Best-effort DefectDojo Pro detection with a pointer to Pro's built-in MCP server.
 
 [0.1.0]: https://github.com/DefectDojo/defectdojo-mcp/releases/tag/v0.1.0

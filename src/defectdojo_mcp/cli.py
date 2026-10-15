@@ -22,7 +22,7 @@ environment:
   DEFECTDOJO_VERIFY_SSL      true (default), false, or a CA bundle path
   DEFECTDOJO_TIMEOUT         request timeout in seconds (default 30)
   DEFECTDOJO_ALLOW_WRITES    true to register write tools (default false)
-  DEFECTDOJO_IMPORT_DIRS     folders scan files may be read from (stdio imports)
+  DEFECTDOJO_IMPORT_DIRS     folders scan files may be read from (unset = no file path imports)
   DEFECTDOJO_MAX_UPLOAD_MB   largest scan file to upload (default 25)
   DEFECTDOJO_MCP_AUTH_TOKEN  bearer token clients must send in HTTP token mode
   DEFECTDOJO_MCP_ALLOWED_HOSTS  extra Host header values allowed in HTTP mode

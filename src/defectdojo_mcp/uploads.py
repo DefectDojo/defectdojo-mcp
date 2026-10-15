@@ -30,14 +30,22 @@ def safe_file_name(name: str) -> str:
     return cleaned[:120]
 
 
+def _is_forbidden_root(path: Path) -> bool:
+    return path == Path(path.anchor) or path == Path.home().resolve()
+
+
+def _has_hidden_part(parts: tuple[str, ...]) -> bool:
+    return any(part.startswith(".") and part not in {".", ".."} for part in parts)
+
+
 def allowed_roots(settings: Settings) -> tuple[Path, ...]:
-    if settings.import_dirs:
-        return settings.import_dirs
-    cwd = Path.cwd().resolve()
-    if cwd == Path(cwd.anchor):
-        # Refuse to treat the filesystem root as an allowed directory.
-        return ()
-    return (cwd,)
+    """Folders file imports may read from. Empty unless DEFECTDOJO_IMPORT_DIRS is set.
+
+    There is deliberately no fallback to the working directory, which is often
+    a home folder or a repository full of secrets. The filesystem root and the
+    home folder itself are never accepted as roots.
+    """
+    return tuple(root for root in settings.import_dirs if not _is_forbidden_root(root))
 
 
 def _human(n: int) -> str:
@@ -48,9 +56,14 @@ def load_from_path(settings: Settings, raw_path: str) -> ScanFile:
     """Read a local file after checking it sits inside an allowed directory."""
     roots = allowed_roots(settings)
     if not roots:
+        hint = (
+            " The configured folders were ignored because the filesystem root and the home folder are not allowed."
+            if settings.import_dirs
+            else ""
+        )
         raise UploadError(
-            "File imports from disk are disabled because no import directory is configured. Set "
-            "DEFECTDOJO_IMPORT_DIRS to the folder(s) that hold your scan reports."
+            "File imports from disk are disabled. Set DEFECTDOJO_IMPORT_DIRS to the folder(s) that hold your scan "
+            "reports, or send the report as file_content_base64." + hint
         )
     if "\x00" in raw_path:
         raise UploadError("The file path contains a null byte.")
@@ -61,12 +74,23 @@ def load_from_path(settings: Settings, raw_path: str) -> ScanFile:
         resolved = candidate.resolve(strict=True)
     except (FileNotFoundError, RuntimeError, OSError) as exc:
         raise UploadError(f"File not found: {raw_path}") from exc
-    if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
+    root = next((r for r in roots if resolved == r or resolved.is_relative_to(r)), None)
+    if root is None:
         allowed = ", ".join(str(r) for r in roots)
         raise UploadError(
             f"{raw_path} is outside the allowed import directories ({allowed}). "
             "Move the report there or add its folder to DEFECTDOJO_IMPORT_DIRS."
         )
+    # Reject hidden files and folders, both as requested and after following symlinks.
+    requested = Path(raw_path).expanduser()
+    if requested.is_absolute():
+        lexical = Path(os.path.normpath(requested))
+        under = next((r for r in roots if lexical.is_relative_to(r)), None)
+        requested_parts = lexical.relative_to(under).parts if under else ()
+    else:
+        requested_parts = requested.parts
+    if _has_hidden_part(requested_parts) or _has_hidden_part(resolved.relative_to(root).parts):
+        raise UploadError(f"{raw_path} is a hidden file or inside a hidden folder, which imports never read.")
     if not resolved.is_file():
         raise UploadError(f"{raw_path} is not a regular file.")
     size = resolved.stat().st_size

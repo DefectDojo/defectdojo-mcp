@@ -128,7 +128,7 @@ All settings come from environment variables.
 | `DEFECTDOJO_VERIFY_SSL` | `true` | `true`, `false`, or the path to a CA bundle for private certificate authorities. |
 | `DEFECTDOJO_TIMEOUT` | `30` | Request timeout in seconds. |
 | `DEFECTDOJO_ALLOW_WRITES` | `false` | Set to `true` to register the write tools. |
-| `DEFECTDOJO_IMPORT_DIRS` | current directory | Folders that `import_scan` and `reimport_scan` may read report files from. Separate several with `:` (`;` on Windows). |
+| `DEFECTDOJO_IMPORT_DIRS` | none | Folders that `import_scan` and `reimport_scan` may read report files from. Separate several with `:` (`;` on Windows). While unset, imports by file path are refused and only base64 uploads work. The home folder itself and the filesystem root are never accepted. |
 | `DEFECTDOJO_MAX_UPLOAD_MB` | `25` | Largest scan report the server will upload. |
 | `DEFECTDOJO_MCP_AUTH_TOKEN` | none | Bearer token that HTTP clients must send in token mode. |
 | `DEFECTDOJO_MCP_ALLOWED_HOSTS` | none | Comma-separated host names accepted in the `Host` header when serving HTTP on a non-loopback address. |
@@ -167,7 +167,9 @@ Every tool returns JSON. List tools are paged with `limit` and `offset`, and eac
 | `create_product` | Create a product in a product type. |
 | `create_engagement` | Create an engagement in a product. |
 
-Scan reports reach the server in one of two ways. Over stdio, pass `file_path` pointing at a file inside `DEFECTDOJO_IMPORT_DIRS`. Over stdio or HTTP, pass the report as `file_content_base64` with a `file_name`. The server checks the size limit, resolves symlinks before checking the folder, and rejects anything outside the allowed folders. If the server's working directory is the filesystem root and `DEFECTDOJO_IMPORT_DIRS` is unset, file path imports are refused.
+Scan reports reach the server in one of two ways. Over stdio, pass `file_path` pointing at a file inside one of the `DEFECTDOJO_IMPORT_DIRS` folders. Over stdio or HTTP, pass the report as `file_content_base64` with a `file_name`.
+
+File path imports fail closed. With no `DEFECTDOJO_IMPORT_DIRS` set, the server refuses them instead of falling back to its working directory. It also refuses the home folder and the filesystem root as import folders, resolves symlinks before checking that a file is inside an allowed folder, rejects hidden files and anything inside a hidden folder (any path part that starts with a dot, before or after following symlinks), enforces the size limit, and never includes file contents in error messages. Point `DEFECTDOJO_IMPORT_DIRS` at a dedicated reports folder, not at a home folder or a whole repository.
 
 ### Prompts
 
@@ -189,6 +191,10 @@ To enable writes, add `"DEFECTDOJO_ALLOW_WRITES": "true"` to the `env` block of 
 Finding titles, descriptions, notes, file paths, component names and similar fields usually come straight from scanner output. Anyone who controls something that gets scanned can put text there, including instructions aimed at an AI assistant.
 
 This server wraps every free-text value from DefectDojo in `<untrusted-data>` tags, neutralizes any look-alike tags inside the text, and truncates long fields. Tool descriptions and the server instructions tell the model to treat tagged text as data only. This lowers the risk but cannot remove it, so keep a person in the loop for write actions and review what the assistant proposes.
+
+### Local files
+
+A prompt-injected assistant could try to upload local files, such as keys or dotfiles, to DefectDojo through `import_scan`. That is why file path imports are off until you name the folders in `DEFECTDOJO_IMPORT_DIRS`, and why hidden files are always refused. Keep scan reports in their own folder.
 
 ### API key scope
 
