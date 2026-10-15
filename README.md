@@ -190,7 +190,7 @@ To enable writes, add `"DEFECTDOJO_ALLOW_WRITES": "true"` to the `env` block of 
 
 Finding titles, descriptions, notes, file paths, component names and similar fields usually come straight from scanner output. Anyone who controls something that gets scanned can put text there, including instructions aimed at an AI assistant.
 
-This server wraps every free-text value from DefectDojo in `<untrusted-data>` tags, neutralizes any look-alike tags inside the text, and truncates long fields. Tool descriptions and the server instructions tell the model to treat tagged text as data only. This lowers the risk but cannot remove it, so keep a person in the loop for write actions and review what the assistant proposes.
+This server wraps every free-text value from DefectDojo in a pair of tags with a random 16-character hex suffix chosen for that value, for example `<untrusted-data-3f9c0a7b1e2d4c58>...</untrusted-data-3f9c0a7b1e2d4c58>`. A client or model recognizes the data by the matching suffix on the opening and closing tag. Text inside cannot close the wrapper early because it cannot guess the suffix. As a second layer, look-alike tags inside the text are escaped, bidirectional control characters are shown as code points such as `[U+202E]`, and long fields are truncated. Tool descriptions and the server instructions tell the model to treat tagged text as data only. This lowers the risk but cannot remove it, so keep a person in the loop for write actions and review what the assistant proposes.
 
 ### Local files
 

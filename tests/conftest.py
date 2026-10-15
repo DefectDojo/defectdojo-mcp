@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -18,6 +19,30 @@ from defectdojo_mcp.server import build_server
 BASE = "https://dojo.example.com"
 API = f"{BASE}/api/v2"
 API_KEY = "test-api-key-0123456789abcdef"
+
+# Real markers carry a random suffix per value. Tests compare against these
+# placeholders after norm() has checked that every opening tag has a matching
+# closing tag with the same suffix.
+OPEN_TAG = "<untrusted-data>"
+CLOSE_TAG = "</untrusted-data>"
+_PAIR_RE = re.compile(r"<untrusted-data-([0-9a-f]{16})>(.*?)</untrusted-data-\1>", re.DOTALL)
+_ANY_NONCE_TAG = re.compile(r"</?untrusted-data-[0-9a-f]{16}>")
+
+
+def norm(value: Any) -> Any:
+    """Replace each well-formed nonce marker pair with the placeholders, recursively.
+
+    Fails if a marker with a suffix is left over, which means a pair did not match.
+    """
+    if isinstance(value, str):
+        out = _PAIR_RE.sub(lambda m: f"{OPEN_TAG}{m.group(2)}{CLOSE_TAG}", value)
+        assert not _ANY_NONCE_TAG.search(out), f"unmatched marker in {value!r}"
+        return out
+    if isinstance(value, dict):
+        return {norm(k): norm(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [norm(v) for v in value]
+    return value
 
 
 @pytest.fixture(autouse=True)
@@ -64,14 +89,14 @@ async def call(client: Client, name: str, args: dict[str, Any] | None = None) ->
 def data(result: CallToolResult) -> Any:
     assert not result.is_error, result.content
     if result.structured_content is not None:
-        return result.structured_content
+        return norm(result.structured_content)
     first = result.content[0]
-    return json.loads(first.text)  # type: ignore[union-attr]
+    return norm(json.loads(first.text))  # type: ignore[union-attr]
 
 
 def error_text(result: CallToolResult) -> str:
     assert result.is_error, "expected an error result"
-    return result.content[0].text  # type: ignore[union-attr]
+    return norm(result.content[0].text)  # type: ignore[no-any-return, union-attr]
 
 
 def page(results: list[dict[str, Any]], count: int | None = None, has_next: bool = False) -> dict[str, Any]:
