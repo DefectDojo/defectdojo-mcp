@@ -1,0 +1,10 @@
+.git
+.github
+.venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+dist
+build
+tests
+**/__pycache__
