@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
@@ -46,6 +47,8 @@ FINDING_ORDER_FIELDS = (
 )
 FindingOrder = Annotated[str, Field(pattern=r"^-?(" + "|".join(FINDING_ORDER_FIELDS) + r")$")]
 
+_VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$")
+
 PRO_POINTER = (
     "This instance looks like DefectDojo Pro. Pro includes its own built-in MCP server at {url}/mcp with "
     "more capabilities. This open-source server works with Pro as well."
@@ -78,9 +81,14 @@ async def detect_edition(app: App) -> dict[str, Any]:
         )
     except httpx.HTTPError:
         return {"edition": "unknown", "evidence": "could not probe /mcp"}
-    content_type = response.headers.get("content-type", "")
+    content_type = response.headers.get("content-type", "").lower()
     if response.is_redirect or response.status_code == 404:
         return {"edition": "open-source", "evidence": "no MCP endpoint at /mcp"}
+    # A reverse proxy in front of open-source DefectDojo (basic auth, an SSO
+    # gateway, a WAF page) also answers 401 or 405. An MCP endpoint never
+    # answers with a web page or asks for Basic credentials.
+    if "html" in content_type or response.headers.get("www-authenticate", "").lower().startswith("basic"):
+        return {"edition": "unknown", "evidence": f"/mcp answered {response.status_code} like a web page or proxy"}
     if response.status_code in {400, 401, 405, 406} or "json" in content_type or "event-stream" in content_type:
         return {"edition": "pro", "evidence": f"/mcp answered like an MCP endpoint ({response.status_code})"}
     return {"edition": "unknown", "evidence": f"/mcp answered {response.status_code}"}
@@ -158,7 +166,10 @@ def register_read_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR091
             "writes_enabled": app.settings.allow_writes,
         }
         version = await app.client.schema_version(api_key)
-        info["defectdojo_version"] = version or "unknown"
+        if version and not _VERSION_RE.match(version):
+            info["defectdojo_version"] = wrap_short(version)
+        else:
+            info["defectdojo_version"] = version or "unknown"
         try:
             profile = await app.client.get("user_profile/", api_key=api_key, resource="user profile")
             user_record = profile.get("user") if isinstance(profile, dict) else None
@@ -322,8 +333,8 @@ def register_read_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR091
                 out["locations"] = items
                 if len(endpoints) > 100:
                     out["locations_truncated"] = True
-            elif record.get("endpoints"):
-                out["endpoint_ids"] = list(record["endpoints"])[:100]
+            elif isinstance(record.get("endpoints"), list) and record["endpoints"]:
+                out["endpoint_ids"] = [shaping.safe_value("endpoint_ids", e) for e in record["endpoints"][:100]]
         return out
 
     @mcp.tool(

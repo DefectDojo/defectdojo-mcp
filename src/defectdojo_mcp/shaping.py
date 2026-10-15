@@ -53,6 +53,11 @@ def _safe(key: str, value: Any) -> Any:
     return wrap_short(value)
 
 
+def safe_value(key: str, value: Any) -> Any:
+    """Public form of _safe for values shaped outside this module."""
+    return _safe(key, value)
+
+
 def _pick(record: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
     return {k: _safe(k, record[k]) for k in keys if k in record and record[k] is not None}
 
