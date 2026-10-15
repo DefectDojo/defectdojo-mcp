@@ -7,7 +7,7 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --locked --no-dev --no-editable
 
-FROM python:3.13-slim-trixie
+FROM python:3.14-slim-trixie
 LABEL org.opencontainers.image.title="defectdojo-mcp" \
       org.opencontainers.image.description="Open-source MCP server for DefectDojo" \
       org.opencontainers.image.source="https://github.com/DefectDojo/defectdojo-mcp" \
