@@ -147,6 +147,23 @@ def _finding_params(
     }
 
 
+def _notes_page(data: Any, limit: int, offset: int) -> tuple[int, list[Any], bool]:
+    """(count, notes, has_next) from findings/{id}/notes/.
+
+    DefectDojo 2.x and 3.x answer {"finding_id": ..., "notes": [...]} without
+    paging. A paged {"results": [...]} or bare list is accepted too.
+    """
+    if isinstance(data, dict) and "results" in data:
+        notes = data.get("results") or []
+        return data.get("count", len(notes)), notes, bool(data.get("next"))
+    if isinstance(data, dict) and "notes" in data:
+        all_notes = data.get("notes") or []
+        return len(all_notes), all_notes[offset : offset + limit], offset + limit < len(all_notes)
+    if isinstance(data, list):
+        return len(data), data[offset : offset + limit], offset + limit < len(data)
+    raise ToolError("DefectDojo returned an unexpected response for finding notes.")
+
+
 def register_read_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR0915 - one closure per tool
     @mcp.tool(
         title="DefectDojo instance info",
@@ -320,10 +337,9 @@ def register_read_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR091
                 if len(notes) > 50:
                     out["notes_truncated"] = True
             else:
-                page = await app.page(
-                    ctx, f"findings/{finding_id}/notes/", {}, 50, 0, lambda n: shaping.note(n, max_text_chars), "notes"
-                )
-                out["notes"] = page["results"]
+                notes_data = await app.get(ctx, f"findings/{finding_id}/notes/", {"limit": 50}, resource="finding")
+                _, first_notes, _ = _notes_page(notes_data, 50, 0)
+                out["notes"] = [shaping.note(n, max_text_chars) for n in first_notes if isinstance(n, dict)]
 
         if include_locations:
             prefetched = record.get("prefetch")
@@ -404,19 +420,7 @@ def register_read_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR091
         data = await app.get(
             ctx, f"findings/{finding_id}/notes/", {"limit": limit, "offset": offset}, resource="finding"
         )
-        if isinstance(data, dict) and "results" in data:
-            notes = data.get("results") or []
-            count = data.get("count", len(notes))
-            has_next = bool(data.get("next"))
-        elif isinstance(data, dict) and "notes" in data:
-            all_notes = data.get("notes") or []
-            count, notes = len(all_notes), all_notes[offset : offset + limit]
-            has_next = offset + limit < count
-        elif isinstance(data, list):
-            count, notes = len(data), data[offset : offset + limit]
-            has_next = offset + limit < count
-        else:
-            raise ToolError("DefectDojo returned an unexpected response for finding notes.")
+        count, notes, has_next = _notes_page(data, limit, offset)
         shaped = [shaping.note(n, 4000) for n in notes if isinstance(n, dict)]
         return {
             "finding_id": finding_id,
