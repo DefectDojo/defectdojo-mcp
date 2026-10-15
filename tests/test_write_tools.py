@@ -237,16 +237,17 @@ async def test_import_fails_closed_without_import_dirs(
     assert route.call_count == 1
 
 
-@pytest.mark.parametrize("root", ["home", "fs_root"])
+@pytest.mark.parametrize("root", ["home", "fs_root", "home_parent"])
 async def test_import_refuses_home_and_filesystem_root(mock_api: respx.Router, root: str) -> None:
-    path = Path.home().resolve() if root == "home" else Path("/")
+    paths = {"home": Path.home().resolve(), "fs_root": Path("/"), "home_parent": Path.home().resolve().parent}
+    path = paths[root]
     settings = make_settings(allow_writes=True, import_dirs=(path,))
     target = str(path / "anything.json")
     async with connect(settings) as client:
         text = error_text(
             await call(client, "import_scan", {"scan_type": "x Scan", "file_path": target, "engagement_id": 1})
         )
-    assert "home folder are not allowed" in text
+    assert "the home folder and its parents are not allowed" in text
 
 
 @pytest.mark.parametrize(

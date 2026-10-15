@@ -47,6 +47,7 @@ defectdojo-mcp = "defectdojo_mcp.cli:main"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.140",
     "mypy>=1.18",
     "pytest>=8.4",
     "pytest-asyncio>=1.2",
