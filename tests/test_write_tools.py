@@ -582,3 +582,72 @@ async def test_create_engagement_defaults_to_today(rw: Settings, mock_api: respx
     body = json.loads(route.calls.last.request.content)
     assert body["target_start"] == body["target_end"]
     assert body["engagement_type"] == "CI/CD"
+
+
+async def test_update_status_reports_partial_success_when_the_note_fails(rw: Settings, mock_api: respx.Router) -> None:
+    mock_api.patch("/findings/7/").respond(200, json={})
+    mock_api.post("/findings/7/notes/").respond(500)
+    async with connect(rw) as client:
+        text = error_text(
+            await call(client, "update_finding_status", {"finding_id": 7, "verified": True, "note": "checked"})
+        )
+    assert "Partly applied to finding 7: the status flags were updated." in text
+    assert "server error (500)" in text
+
+
+async def test_update_status_reports_partial_success_when_close_follow_up_fails(
+    rw: Settings, mock_api: respx.Router
+) -> None:
+    mock_api.post("/findings/7/close/").respond(200, json={})
+    mock_api.patch("/findings/7/").respond(400, json={"verified": ["nope"]})
+    async with connect(rw) as client:
+        text = error_text(
+            await call(client, "update_finding_status", {"finding_id": 7, "mitigated": True, "verified": False})
+        )
+    assert "Partly applied to finding 7: the finding was closed." in text
+    assert "invalid (400)" in text
+
+
+async def test_update_status_first_step_failure_is_not_called_partial(rw: Settings, mock_api: respx.Router) -> None:
+    mock_api.post("/findings/7/close/").respond(404)
+    async with connect(rw) as client:
+        text = error_text(await call(client, "update_finding_status", {"finding_id": 7, "mitigated": True}))
+    assert "Partly" not in text
+    assert "404" in text
+
+
+async def test_update_status_warns_when_mitigated_date_is_ignored(rw: Settings, mock_api: respx.Router) -> None:
+    # Real DefectDojo keeps "now" unless DD_EDITABLE_MITIGATED_DATA is on.
+    mock_api.post("/findings/7/close/").respond(200, json={})
+    mock_api.get("/findings/7/").respond(json={**FINDING_AFTER, "mitigated": "2026-10-15T18:48:13.039591Z"})
+    async with connect(rw) as client:
+        result = data(
+            await call(
+                client, "update_finding_status", {"finding_id": 7, "mitigated": True, "mitigated_date": "2024-01-02"}
+            )
+        )
+    assert "2026-10-15" in result["warning"]
+    assert "2024-01-02" in result["warning"]
+
+
+async def test_update_status_no_warning_when_mitigated_date_is_kept(rw: Settings, mock_api: respx.Router) -> None:
+    mock_api.post("/findings/7/close/").respond(200, json={})
+    mock_api.get("/findings/7/").respond(json={**FINDING_AFTER, "mitigated": "2024-01-02T12:00:00Z"})
+    async with connect(rw) as client:
+        result = data(
+            await call(
+                client, "update_finding_status", {"finding_id": 7, "mitigated": True, "mitigated_date": "2024-01-02"}
+            )
+        )
+    assert "warning" not in result
+
+
+async def test_risk_accept_note_failure_does_not_hide_the_acceptance(rw: Settings, mock_api: respx.Router) -> None:
+    mock_api.patch("/findings/1/").respond(200, json={})
+    mock_api.post("/findings/1/notes/").respond(500)
+    async with connect(rw) as client:
+        result = data(await call(client, "risk_accept_findings", {"finding_ids": [1], "justification": "WAF rule"}))
+    assert result["succeeded"] == 1
+    assert result["failed"] == 0
+    assert result["results"][0]["ok"] is True
+    assert "500" in result["results"][0]["note_error"]
