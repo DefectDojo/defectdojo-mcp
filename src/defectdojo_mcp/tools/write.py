@@ -58,6 +58,48 @@ def _form(fields: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _status_patch(
+    active: bool | None,
+    verified: bool | None,
+    false_positive: bool | None,
+    out_of_scope: bool | None,
+    mitigated: bool | None,
+) -> dict[str, Any]:
+    """PATCH body for a status change that does not close the finding."""
+    patch: dict[str, Any] = {}
+    if false_positive is not None:
+        patch["false_p"] = false_positive
+        if false_positive and verified is None:
+            patch["verified"] = False
+    if out_of_scope is not None:
+        patch["out_of_scope"] = out_of_scope
+    if verified is not None:
+        patch["verified"] = verified
+    if mitigated is False:
+        patch["is_mitigated"] = False
+        patch["mitigated"] = None
+    if active is not None:
+        patch["active"] = active
+    elif false_positive or out_of_scope:
+        patch["active"] = False
+    elif mitigated is False:
+        patch["active"] = True
+    return patch
+
+
+def _mitigated_date_warning(requested: dt.date | None, record: Any) -> str | None:
+    """Say so when DefectDojo kept its own mitigated date instead of the requested one."""
+    if requested is None or not isinstance(record, dict):
+        return None
+    kept = str(record.get("mitigated") or "")[:10]
+    if kept == requested.isoformat():
+        return None
+    return (
+        f"DefectDojo recorded the mitigated date as {kept or 'unset'}, not {requested.isoformat()}. "
+        "It ignores custom mitigation dates unless the server allows editing them (DD_EDITABLE_MITIGATED_DATA)."
+    )
+
+
 def register_write_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR0915 - one closure per tool
     file_help = (
         "Provide the report as file_path (a file on this machine, inside DEFECTDOJO_IMPORT_DIRS) or as "
@@ -299,51 +341,49 @@ def register_write_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR09
             raise ToolError("mitigated_date only applies together with mitigated=true.")
 
         note_added = False
-        if mitigated:
-            body: dict[str, Any] = {
-                "is_mitigated": True,
-                "false_p": bool(false_positive),
-                "out_of_scope": bool(out_of_scope),
-            }
-            if mitigated_date is not None:
-                body["mitigated"] = dt.datetime.combine(mitigated_date, dt.time(12, 0), tzinfo=dt.UTC).isoformat()
-            if note:
-                body["note"] = note
+        done: list[str] = []
+        try:
+            if mitigated:
+                body: dict[str, Any] = {
+                    "is_mitigated": True,
+                    "false_p": bool(false_positive),
+                    "out_of_scope": bool(out_of_scope),
+                }
+                if mitigated_date is not None:
+                    body["mitigated"] = dt.datetime.combine(mitigated_date, dt.time(12, 0), tzinfo=dt.UTC).isoformat()
+                if note:
+                    body["note"] = note
+                await app.post(ctx, f"findings/{finding_id}/close/", body, resource="finding")
+                note_added = bool(note)
+                done.append("the finding was closed" + (" with the note" if note else ""))
+                if verified is not None:
+                    await app.patch(ctx, f"findings/{finding_id}/", {"verified": verified}, resource="finding")
+                    done.append(f"verified was set to {str(verified).lower()}")
+            else:
+                patch = _status_patch(active, verified, false_positive, out_of_scope, mitigated)
+                await app.patch(ctx, f"findings/{finding_id}/", patch, resource="finding")
+                done.append("the status flags were updated")
+
+            if note and not note_added:
+                await app.post(ctx, f"findings/{finding_id}/notes/", {"entry": note}, resource="finding")
                 note_added = True
-            await app.post(ctx, f"findings/{finding_id}/close/", body, resource="finding")
-            follow_up: dict[str, Any] = {}
-            if verified is not None:
-                follow_up["verified"] = verified
-            if follow_up:
-                await app.patch(ctx, f"findings/{finding_id}/", follow_up, resource="finding")
-        else:
-            patch: dict[str, Any] = {}
-            if false_positive is not None:
-                patch["false_p"] = false_positive
-                if false_positive and verified is None:
-                    patch["verified"] = False
-            if out_of_scope is not None:
-                patch["out_of_scope"] = out_of_scope
-            if verified is not None:
-                patch["verified"] = verified
-            if mitigated is False:
-                patch["is_mitigated"] = False
-                patch["mitigated"] = None
-            if active is not None:
-                patch["active"] = active
-            elif false_positive or out_of_scope:
-                patch["active"] = False
-            elif mitigated is False:
-                patch["active"] = True
-            await app.patch(ctx, f"findings/{finding_id}/", patch, resource="finding")
+                done.append("the note was added")
 
-        if note and not note_added:
-            await app.post(ctx, f"findings/{finding_id}/notes/", {"entry": note}, resource="finding")
-            note_added = True
+            record = await app.get(ctx, f"findings/{finding_id}/", resource="finding")
+        except ToolError as exc:
+            if not done:
+                raise
+            # Earlier steps already changed the finding, so say exactly what happened.
+            raise ToolError(
+                f"Partly applied to finding {finding_id}: {'; '.join(done)}. The next step failed: {exc} "
+                "Check the finding before retrying."
+            ) from exc
 
-        record = await app.get(ctx, f"findings/{finding_id}/", resource="finding")
-        out = shaping.finding_summary(record) if isinstance(record, dict) else {"id": finding_id}
+        out: dict[str, Any] = shaping.finding_summary(record) if isinstance(record, dict) else {"id": finding_id}
         out["note_added"] = note_added
+        warning = _mitigated_date_warning(mitigated_date, record)
+        if warning:
+            out["warning"] = warning
         return out
 
     @mcp.tool(
@@ -369,16 +409,22 @@ def register_write_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR09
         for finding_id in dict.fromkeys(finding_ids):
             try:
                 await app.client.patch(f"findings/{finding_id}/", api_key=api_key, json_body=body, resource="finding")
-                if justification:
+            except DojoAPIError as exc:
+                results.append({"finding_id": finding_id, "ok": False, "error": exc.message})
+                continue
+            outcome: dict[str, Any] = {"finding_id": finding_id, "ok": True}
+            if justification:
+                try:
                     await app.client.post(
                         f"findings/{finding_id}/notes/",
                         api_key=api_key,
                         json_body={"entry": justification},
                         resource="finding",
                     )
-                results.append({"finding_id": finding_id, "ok": True})
-            except DojoAPIError as exc:
-                results.append({"finding_id": finding_id, "ok": False, "error": exc.message})
+                except DojoAPIError as exc:
+                    # The acceptance itself went through, only the justification note is missing.
+                    outcome["note_error"] = exc.message
+            results.append(outcome)
         succeeded = sum(1 for r in results if r["ok"])
         return {
             "action": "revoke" if revoke else "accept",

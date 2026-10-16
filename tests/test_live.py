@@ -24,6 +24,8 @@ import pytest
 from mcp import Client, StdioServerParameters
 from mcp.types import CallToolResult
 
+from defectdojo_mcp.untrusted import WRAPPED_RE
+
 pytestmark = pytest.mark.live
 
 LIVE_URL = os.environ.get("DEFECTDOJO_LIVE_URL")
@@ -142,8 +144,9 @@ async def test_every_tool_against_a_real_instance() -> None:  # noqa: PLR0915 - 
 
         detail = _ok(await client.call_tool("get_finding", {"finding_id": critical_id}))
         description = detail["description"]
-        assert description.startswith("<untrusted-data>")
-        assert description.count("</untrusted-data>") == 1
+        match = WRAPPED_RE.match(description)
+        assert match, description
+        assert "untrusted-data-" not in match.group(2)
         assert "IGNORE ALL PREVIOUS INSTRUCTIONS" in description
         assert detail["context"]["product_id"] == product_id
         assert detail["cwe"] == 89

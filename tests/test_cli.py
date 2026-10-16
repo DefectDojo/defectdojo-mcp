@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import pytest
 
@@ -122,3 +123,51 @@ def test_configure_logging_redacts(capsys: pytest.CaptureFixture[str]) -> None:
     err = capsys.readouterr().err
     assert "topsecretvalue" not in err
     assert "[REDACTED]" in err
+
+
+_INIT = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}},
+}
+_TOKEN = "cli-bearer-token-0123456789abcdef"
+
+
+def _served_status(monkeypatch: pytest.MonkeyPatch, host: str, allowed_hosts: str, headers: dict[str, str]) -> int:
+    """Run main() in HTTP mode with uvicorn stubbed out, then send one request to the app it built."""
+    import uvicorn
+    from starlette.testclient import TestClient
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, **_: captured.setdefault("app", app))
+    monkeypatch.setattr(cli, "configure_logging", lambda *_: None)
+    for key, value in {
+        "DEFECTDOJO_URL": "https://dojo.example.com",
+        "DEFECTDOJO_API_KEY": "k" * 40,
+        "DEFECTDOJO_MCP_AUTH_TOKEN": _TOKEN,
+        "DEFECTDOJO_MCP_ALLOWED_HOSTS": allowed_hosts,
+    }.items():
+        monkeypatch.setenv(key, value)
+    assert main(["--transport", "http", "--host", host]) == 0
+    base = {
+        "Authorization": f"Bearer {_TOKEN}",
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+    with TestClient(captured["app"], base_url="http://127.0.0.1:8000") as client:
+        return client.post("/mcp", json=_INIT, headers={**base, **headers}).status_code
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "0:0:0:0:0:0:0:1", "127.0.0.2", "LOCALHOST"])
+def test_every_loopback_spelling_checks_host_and_origin(monkeypatch: pytest.MonkeyPatch, host: str) -> None:
+    assert _served_status(monkeypatch, host, "", {"Host": "evil.example"}) == 421
+    assert _served_status(monkeypatch, host, "", {"Origin": "http://evil.example"}) == 403
+    assert _served_status(monkeypatch, host, "", {"Origin": "http://localhost:6274"}) == 200
+
+
+def test_allowed_hosts_keep_local_clients_working(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _served_status(monkeypatch, "127.0.0.1", "mcp.example.com", {"Origin": "http://localhost:6274"}) == 200
+    assert _served_status(monkeypatch, "127.0.0.1", "mcp.example.com", {"Host": "mcp.example.com"}) == 200
+    assert _served_status(monkeypatch, "127.0.0.1", "mcp.example.com", {"Host": "evil.example"}) == 421
+    assert _served_status(monkeypatch, "127.0.0.1", "mcp.example.com", {"Origin": "http://evil.example"}) == 403

@@ -7,9 +7,13 @@ import ipaddress
 import logging
 import sys
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from defectdojo_mcp import __version__
 from defectdojo_mcp.config import ConfigError, Settings
+
+if TYPE_CHECKING:
+    from mcp.server.transport_security import TransportSecuritySettings
 
 logger = logging.getLogger("defectdojo_mcp")
 
@@ -73,6 +77,31 @@ def is_loopback(host: str) -> bool:
         return False
 
 
+LOOPBACK_HOSTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+LOOPBACK_ORIGINS = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+
+
+def transport_security(settings: Settings, host: str) -> TransportSecuritySettings | None:
+    """Host and Origin checks against DNS rebinding.
+
+    Always on for a loopback bind, whatever its spelling (the SDK only turns
+    them on by itself for "127.0.0.1", "localhost" and "::1"), and on for any
+    bind once DEFECTDOJO_MCP_ALLOWED_HOSTS is set. Loopback clients such as a
+    local inspector keep working when extra hosts are added.
+    """
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    loopback = is_loopback(host)
+    if not loopback and not settings.allowed_hosts:
+        return None
+    hosts = list(settings.allowed_hosts)
+    origins = [f"https://{h}" for h in settings.allowed_hosts] + [f"http://{h}" for h in settings.allowed_hosts]
+    if loopback:
+        hosts += LOOPBACK_HOSTS
+        origins += LOOPBACK_ORIGINS
+    return TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="defectdojo-mcp",
@@ -122,7 +151,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def run_http(args: argparse.Namespace, settings: Settings) -> int:
     import uvicorn
-    from mcp.server.transport_security import TransportSecuritySettings
 
     from defectdojo_mcp.http_auth import AuthMiddleware
     from defectdojo_mcp.server import build_server
@@ -145,17 +173,7 @@ def run_http(args: argparse.Namespace, settings: Settings) -> int:
         logger.warning("Pass-through mode ignores DEFECTDOJO_API_KEY. Each client must send its own key.")
 
     loopback = is_loopback(args.host)
-    security: TransportSecuritySettings | None = None
-    if settings.allowed_hosts:
-        hosts = list(settings.allowed_hosts)
-        if loopback:
-            hosts += ["127.0.0.1:*", "localhost:*", "[::1]:*"]
-        security = TransportSecuritySettings(
-            enable_dns_rebinding_protection=True,
-            allowed_hosts=hosts,
-            allowed_origins=[f"https://{h}" for h in settings.allowed_hosts]
-            + [f"http://{h}" for h in settings.allowed_hosts],
-        )
+    security = transport_security(settings, args.host)
     if not loopback:
         logger.warning(
             "Listening on %s, which is not a loopback address. Put the server behind TLS and set "

@@ -25,6 +25,9 @@ Params = Mapping[str, Any]
 FileTuple = tuple[str, bytes, str]
 
 
+MAYBE_APPLIED = " The change may still have been applied, so check DefectDojo before trying again."
+
+
 class DojoAPIError(Exception):
     """An error talking to DefectDojo, with a message safe to show to the model."""
 
@@ -142,10 +145,13 @@ class DojoClient:
                     attempt += 1
                     await anyio.sleep(self.retry_base_delay * attempt)
                     continue
-                raise DojoAPIError(
-                    f"Timed out after {self.settings.timeout:g}s waiting for DefectDojo. "
-                    "Try a narrower query or raise DEFECTDOJO_TIMEOUT."
-                ) from exc
+                message = f"Timed out after {self.settings.timeout:g}s waiting for DefectDojo."
+                if idempotent or isinstance(exc, httpx.ConnectTimeout):
+                    message += " Try a narrower query or raise DEFECTDOJO_TIMEOUT."
+                else:
+                    # The request was sent, so DefectDojo may have finished the write after we gave up.
+                    message += MAYBE_APPLIED + " Raise DEFECTDOJO_TIMEOUT for large imports."
+                raise DojoAPIError(message) from exc
             except httpx.HTTPError as exc:
                 if idempotent and attempt < MAX_RETRIES:
                     attempt += 1
@@ -156,6 +162,8 @@ class DojoClient:
                     "Check DEFECTDOJO_URL, network access and TLS settings.",
                     self._secrets(api_key),
                 )
+                if not idempotent and not isinstance(exc, httpx.ConnectError):
+                    message += MAYBE_APPLIED
                 raise DojoAPIError(message) from exc
 
             if response.status_code in RETRY_STATUSES and idempotent and attempt < MAX_RETRIES:
@@ -165,9 +173,9 @@ class DojoClient:
                 logger.info("DefectDojo answered %s, retrying in %.1fs", response.status_code, delay)
                 await anyio.sleep(delay)
                 continue
-            return self._handle(response, api_key, resource)
+            return self._handle(response, api_key, resource, idempotent)
 
-    def _handle(self, response: httpx.Response, api_key: str, resource: str | None) -> Any:
+    def _handle(self, response: httpx.Response, api_key: str, resource: str | None, idempotent: bool = True) -> Any:
         status = response.status_code
         secrets = self._secrets(api_key)
         if 200 <= status < 300:
@@ -217,6 +225,8 @@ class DojoClient:
                 f"DefectDojo had a server error ({status}). Try again later, or check the DefectDojo logs "
                 "if it keeps happening."
             )
+            if not idempotent:
+                message += MAYBE_APPLIED
         else:
             message = f"DefectDojo returned an unexpected status ({status})."
             if detail:

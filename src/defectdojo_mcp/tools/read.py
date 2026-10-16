@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
@@ -46,6 +47,8 @@ FINDING_ORDER_FIELDS = (
 )
 FindingOrder = Annotated[str, Field(pattern=r"^-?(" + "|".join(FINDING_ORDER_FIELDS) + r")$")]
 
+_VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$")
+
 PRO_POINTER = (
     "This instance looks like DefectDojo Pro. Pro includes its own built-in MCP server at {url}/mcp with "
     "more capabilities. This open-source server works with Pro as well."
@@ -78,9 +81,14 @@ async def detect_edition(app: App) -> dict[str, Any]:
         )
     except httpx.HTTPError:
         return {"edition": "unknown", "evidence": "could not probe /mcp"}
-    content_type = response.headers.get("content-type", "")
+    content_type = response.headers.get("content-type", "").lower()
     if response.is_redirect or response.status_code == 404:
         return {"edition": "open-source", "evidence": "no MCP endpoint at /mcp"}
+    # A reverse proxy in front of open-source DefectDojo (basic auth, an SSO
+    # gateway, a WAF page) also answers 401 or 405. An MCP endpoint never
+    # answers with a web page or asks for Basic credentials.
+    if "html" in content_type or response.headers.get("www-authenticate", "").lower().startswith("basic"):
+        return {"edition": "unknown", "evidence": f"/mcp answered {response.status_code} like a web page or proxy"}
     if response.status_code in {400, 401, 405, 406} or "json" in content_type or "event-stream" in content_type:
         return {"edition": "pro", "evidence": f"/mcp answered like an MCP endpoint ({response.status_code})"}
     return {"edition": "unknown", "evidence": f"/mcp answered {response.status_code}"}
@@ -139,6 +147,23 @@ def _finding_params(
     }
 
 
+def _notes_page(data: Any, limit: int, offset: int) -> tuple[int, list[Any], bool]:
+    """(count, notes, has_next) from findings/{id}/notes/.
+
+    DefectDojo 2.x and 3.x answer {"finding_id": ..., "notes": [...]} without
+    paging. A paged {"results": [...]} or bare list is accepted too.
+    """
+    if isinstance(data, dict) and "results" in data:
+        notes = data.get("results") or []
+        return data.get("count", len(notes)), notes, bool(data.get("next"))
+    if isinstance(data, dict) and "notes" in data:
+        all_notes = data.get("notes") or []
+        return len(all_notes), all_notes[offset : offset + limit], offset + limit < len(all_notes)
+    if isinstance(data, list):
+        return len(data), data[offset : offset + limit], offset + limit < len(data)
+    raise ToolError("DefectDojo returned an unexpected response for finding notes.")
+
+
 def register_read_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR0915 - one closure per tool
     @mcp.tool(
         title="DefectDojo instance info",
@@ -158,7 +183,10 @@ def register_read_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR091
             "writes_enabled": app.settings.allow_writes,
         }
         version = await app.client.schema_version(api_key)
-        info["defectdojo_version"] = version or "unknown"
+        if version and not _VERSION_RE.match(version):
+            info["defectdojo_version"] = wrap_short(version)
+        else:
+            info["defectdojo_version"] = version or "unknown"
         try:
             profile = await app.client.get("user_profile/", api_key=api_key, resource="user profile")
             user_record = profile.get("user") if isinstance(profile, dict) else None
@@ -309,10 +337,9 @@ def register_read_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR091
                 if len(notes) > 50:
                     out["notes_truncated"] = True
             else:
-                page = await app.page(
-                    ctx, f"findings/{finding_id}/notes/", {}, 50, 0, lambda n: shaping.note(n, max_text_chars), "notes"
-                )
-                out["notes"] = page["results"]
+                notes_data = await app.get(ctx, f"findings/{finding_id}/notes/", {"limit": 50}, resource="finding")
+                _, first_notes, _ = _notes_page(notes_data, 50, 0)
+                out["notes"] = [shaping.note(n, max_text_chars) for n in first_notes if isinstance(n, dict)]
 
         if include_locations:
             prefetched = record.get("prefetch")
@@ -322,8 +349,8 @@ def register_read_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR091
                 out["locations"] = items
                 if len(endpoints) > 100:
                     out["locations_truncated"] = True
-            elif record.get("endpoints"):
-                out["endpoint_ids"] = list(record["endpoints"])[:100]
+            elif isinstance(record.get("endpoints"), list) and record["endpoints"]:
+                out["endpoint_ids"] = [shaping.safe_value("endpoint_ids", e) for e in record["endpoints"][:100]]
         return out
 
     @mcp.tool(
@@ -393,19 +420,7 @@ def register_read_tools(mcp: MCPServer, app: App) -> None:  # noqa: C901, PLR091
         data = await app.get(
             ctx, f"findings/{finding_id}/notes/", {"limit": limit, "offset": offset}, resource="finding"
         )
-        if isinstance(data, dict) and "results" in data:
-            notes = data.get("results") or []
-            count = data.get("count", len(notes))
-            has_next = bool(data.get("next"))
-        elif isinstance(data, dict) and "notes" in data:
-            all_notes = data.get("notes") or []
-            count, notes = len(all_notes), all_notes[offset : offset + limit]
-            has_next = offset + limit < count
-        elif isinstance(data, list):
-            count, notes = len(data), data[offset : offset + limit]
-            has_next = offset + limit < count
-        else:
-            raise ToolError("DefectDojo returned an unexpected response for finding notes.")
+        count, notes, has_next = _notes_page(data, limit, offset)
         shaped = [shaping.note(n, 4000) for n in notes if isinstance(n, dict)]
         return {
             "finding_id": finding_id,
