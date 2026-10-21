@@ -30,6 +30,9 @@ dependencies = [
     "mcp>=2.3,<3",
     "httpx>=0.28,<1",
     "anyio>=4.9",
+    # httpx trusts certifi's bundle. 2026.10.19 is the first release without the eMudhra roots
+    # (Mozilla bug 2083449); a direct floor keeps pip/uvx installs, which ignore uv.lock, on it.
+    "certifi>=2026.10.19",
     "pydantic>=2.12",
     "starlette>=0.48",
     "uvicorn>=0.31",

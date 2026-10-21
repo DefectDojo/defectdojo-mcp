@@ -18,6 +18,6 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Security
 
-- Locked certifi 2026.10.19 and upgrade `ca-certificates` in its own Docker layer, so the compromised eMudhra root is no longer trusted (Mozilla bug 2083449).
+- Locked certifi 2026.10.19 and upgrade `ca-certificates` in its own Docker layer, so the compromised eMudhra root is no longer trusted (Mozilla bug 2083449). `certifi>=2026.10.19` is now a direct runtime dependency, so `uvx` and `pip` installs, which ignore `uv.lock`, get the fixed bundle too.
 
 [0.1.0]: https://github.com/DefectDojo/defectdojo-mcp/releases/tag/v0.1.0
