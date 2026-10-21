@@ -16,4 +16,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Write errors say when a change may already have been applied, and `update_finding_status` reports partial success.
 - Best-effort DefectDojo Pro detection with a pointer to Pro's built-in MCP server.
 
+### Security
+
+- Locked certifi 2026.10.19 and upgrade `ca-certificates` in its own Docker layer, so the compromised eMudhra root is no longer trusted (Mozilla bug 2083449).
+
 [0.1.0]: https://github.com/DefectDojo/defectdojo-mcp/releases/tag/v0.1.0
