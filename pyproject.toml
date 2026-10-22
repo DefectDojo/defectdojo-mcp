@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
@@ -34,7 +34,7 @@ dependencies = [
     # (Mozilla bug 2083449); a direct floor keeps pip/uvx installs, which ignore uv.lock, on it.
     "certifi>=2026.10.19",
     "pydantic>=2.12",
-    "starlette>=0.48",
+    "starlette>=1.9.0",
     "uvicorn>=0.31",
 ]
 
@@ -50,7 +50,7 @@ defectdojo-mcp = "defectdojo_mcp.cli:main"
 
 [dependency-groups]
 dev = [
-    "hypothesis>=6.140",
+    "hypothesis>=6.170.2",
     "mypy>=1.18",
     "pytest>=8.4",
     "pytest-asyncio>=1.2",
