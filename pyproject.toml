@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "defectdojo-mcp"
+name = "defectdojo-mcp-server"
 version = "0.1.0"
 description = "Official open-source MCP server for DefectDojo. Connect Claude, Cursor, VS Code and other MCP clients to DefectDojo."
 readme = "README.md"
@@ -46,6 +46,9 @@ Changelog = "https://github.com/DefectDojo/defectdojo-mcp/blob/main/CHANGELOG.md
 DefectDojo = "https://github.com/DefectDojo/django-DefectDojo"
 
 [project.scripts]
+# The distribution is defectdojo-mcp-server because an unrelated project owns defectdojo-mcp on PyPI.
+# Both commands run the same server; the first lets `uvx defectdojo-mcp-server` work without --from.
+defectdojo-mcp-server = "defectdojo_mcp.cli:main"
 defectdojo-mcp = "defectdojo_mcp.cli:main"
 
 [dependency-groups]

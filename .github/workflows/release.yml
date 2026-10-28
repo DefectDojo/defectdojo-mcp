@@ -27,6 +27,17 @@ jobs:
         run: |
           version=$(uv version --short)
           test "v${version}" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} does not match version ${version}"; exit 1; }
+      - name: Check server.json matches package version
+        run: |
+          version=$(uv version --short)
+          python3 - "$version" <<'PY'
+          import json, sys
+          version = sys.argv[1]
+          d = json.load(open("server.json"))
+          found = [d["version"]] + [p["version"] if p["registryType"] == "pypi" else p["identifier"].rsplit(":", 1)[1] for p in d["packages"]]
+          assert all(v == version for v in found), f"server.json versions {found} do not all match {version}"
+          assert any(p["registryType"] == "pypi" and p["identifier"] == "defectdojo-mcp-server" for p in d["packages"])
+          PY
       - run: uv sync --locked
       - run: uv run pytest -q
       - run: uv build
@@ -89,19 +100,24 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
+          # server.json names the image by the bare version (0.1.0), which the MCP registry checks.
           tags: |
+            ghcr.io/defectdojo/defectdojo-mcp:${{ steps.ver.outputs.version }}
             ghcr.io/defectdojo/defectdojo-mcp:${{ github.ref_name }}
             ghcr.io/defectdojo/defectdojo-mcp:latest
 
   publish-registry:
-    # Publishes server.json to the official MCP registry after the PyPI package
-    # exists. Enable by setting the repository variable PUBLISH_MCP_REGISTRY=true.
-    needs: publish-pypi
+    # Publishes server.json to the official MCP registry after the PyPI package and the
+    # image exist (the registry checks both). Enable by setting PUBLISH_MCP_REGISTRY=true.
+    needs: [publish-pypi, publish-image]
     if: startsWith(github.ref, 'refs/tags/v') && vars.PUBLISH_MCP_REGISTRY == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -112,7 +128,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Install mcp-publisher
+        # Pinned and checked against the release's checksums file, since this step runs with an OIDC token.
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
         run: |
-          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+          curl -fsSLo mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
       - run: ./mcp-publisher login github-oidc
       - run: ./mcp-publisher publish

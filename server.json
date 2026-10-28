@@ -13,9 +13,51 @@
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
-      "identifier": "defectdojo-mcp",
+      "identifier": "defectdojo-mcp-server",
       "version": "0.1.0",
       "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "DEFECTDOJO_URL",
+          "description": "Base URL of your DefectDojo instance, for example https://defectdojo.example.com",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "DEFECTDOJO_API_KEY",
+          "description": "DefectDojo API v2 key",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "DEFECTDOJO_ALLOW_WRITES",
+          "description": "Set to true to enable write tools. Read-only by default.",
+          "isRequired": false,
+          "format": "boolean",
+          "default": "false"
+        },
+        {
+          "name": "DEFECTDOJO_VERIFY_SSL",
+          "description": "true, false, or a path to a CA bundle",
+          "isRequired": false,
+          "format": "string",
+          "default": "true"
+        },
+        {
+          "name": "DEFECTDOJO_IMPORT_DIRS",
+          "description": "Folders that scan reports may be read from for imports",
+          "isRequired": false,
+          "format": "filepath"
+        }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/defectdojo/defectdojo-mcp:0.1.0",
       "transport": {
         "type": "stdio"
       },
