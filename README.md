@@ -23,10 +23,10 @@ You need:
 Check that it starts:
 
 ```sh
-DEFECTDOJO_URL=https://defectdojo.example.com DEFECTDOJO_API_KEY=your-key uvx defectdojo-mcp --help
+DEFECTDOJO_URL=https://defectdojo.example.com DEFECTDOJO_API_KEY=your-key uvx defectdojo-mcp-server --help
 ```
 
-Until the first release is on PyPI, run it from GitHub instead by replacing `uvx defectdojo-mcp` with `uvx --from git+https://github.com/DefectDojo/defectdojo-mcp defectdojo-mcp`.
+The package on PyPI is `defectdojo-mcp-server`. A package named `defectdojo-mcp` also exists on PyPI, but it is an unrelated project, not this server.
 
 ### Claude Desktop
 
@@ -37,7 +37,7 @@ Open **Settings > Developer > Edit Config** and add the server to `claude_deskto
   "mcpServers": {
     "defectdojo": {
       "command": "uvx",
-      "args": ["defectdojo-mcp"],
+      "args": ["defectdojo-mcp-server"],
       "env": {
         "DEFECTDOJO_URL": "https://defectdojo.example.com",
         "DEFECTDOJO_API_KEY": "your-api-key"
@@ -55,7 +55,7 @@ Restart Claude Desktop after saving.
 claude mcp add defectdojo \
   --env DEFECTDOJO_URL=https://defectdojo.example.com \
   --env DEFECTDOJO_API_KEY=your-api-key \
-  -- uvx defectdojo-mcp
+  -- uvx defectdojo-mcp-server
 ```
 
 ### Cursor
@@ -67,7 +67,7 @@ Add this to `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (one proje
   "mcpServers": {
     "defectdojo": {
       "command": "uvx",
-      "args": ["defectdojo-mcp"],
+      "args": ["defectdojo-mcp-server"],
       "env": {
         "DEFECTDOJO_URL": "https://defectdojo.example.com",
         "DEFECTDOJO_API_KEY": "your-api-key"
@@ -95,7 +95,7 @@ Add this to `.vscode/mcp.json`. VS Code asks for the API key once and stores it 
     "defectdojo": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["defectdojo-mcp"],
+      "args": ["defectdojo-mcp-server"],
       "env": {
         "DEFECTDOJO_URL": "https://defectdojo.example.com",
         "DEFECTDOJO_API_KEY": "${input:defectdojo-api-key}"
@@ -108,12 +108,13 @@ Add this to `.vscode/mcp.json`. VS Code asks for the API key once and stores it 
 ### Docker
 
 ```sh
-docker build -t defectdojo-mcp .
 docker run -i --rm \
   -e DEFECTDOJO_URL=https://defectdojo.example.com \
   -e DEFECTDOJO_API_KEY=your-api-key \
-  defectdojo-mcp
+  ghcr.io/defectdojo/defectdojo-mcp
 ```
+
+To build the image yourself instead, run `docker build -t defectdojo-mcp .` in a clone and use `defectdojo-mcp` as the image name.
 
 Use `"command": "docker"` with these arguments in any client config above to run it in a container. For HTTP mode inside a container, bind all interfaces in the container (`--host 0.0.0.0`), publish the port to loopback only (`-p 127.0.0.1:8000:8000`), and set `DEFECTDOJO_MCP_ALLOWED_HOSTS`.
 

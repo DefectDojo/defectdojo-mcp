@@ -56,8 +56,8 @@ By contributing you agree that your contributions are licensed under the project
 
 ## Releases
 
-Maintainers release by bumping the version in `pyproject.toml`, `server.json` and `CHANGELOG.md`, then pushing a `vX.Y.Z` tag. The release workflow always builds the wheel, sdist and Docker image. Each publishing step stays off until its repository variable is set:
+Maintainers release by bumping the version in `pyproject.toml`, `server.json` (the top-level version, the PyPI package version and the image tag) and `CHANGELOG.md`, then pushing a `vX.Y.Z` tag. The release workflow fails if they disagree. The release workflow always builds the wheel, sdist and Docker image. Each publishing step stays off until its repository variable is set:
 
-- `PUBLISH_PYPI=true` publishes to PyPI with trusted publishing (configure the trusted publisher on PyPI first).
-- `PUBLISH_IMAGE=true` pushes the image to `ghcr.io/defectdojo/defectdojo-mcp`.
-- `PUBLISH_MCP_REGISTRY=true` publishes `server.json` to the official MCP registry after the PyPI upload.
+- `PUBLISH_PYPI=true` publishes `defectdojo-mcp-server` to PyPI with trusted publishing, from the `pypi` environment. Configure the trusted publisher on PyPI first: owner `DefectDojo`, repository `defectdojo-mcp`, workflow `release.yml`, environment `pypi`. The PyPI name `defectdojo-mcp` belongs to an unrelated project.
+- `PUBLISH_IMAGE=true` pushes the image to `ghcr.io/defectdojo/defectdojo-mcp`, tagged with the bare version (`0.1.0`), the tag (`v0.1.0`) and `latest`. The package must be public for the MCP registry to read it.
+- `PUBLISH_MCP_REGISTRY=true` publishes `server.json` to the official MCP registry as `io.github.DefectDojo/defectdojo-mcp`, after both the PyPI upload and the image push.

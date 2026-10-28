@@ -11,7 +11,8 @@ FROM python:3.13-slim-trixie
 LABEL org.opencontainers.image.title="defectdojo-mcp" \
       org.opencontainers.image.description="Open-source MCP server for DefectDojo" \
       org.opencontainers.image.source="https://github.com/DefectDojo/defectdojo-mcp" \
-      org.opencontainers.image.licenses="BSD-3-Clause"
+      org.opencontainers.image.licenses="BSD-3-Clause" \
+      io.modelcontextprotocol.server.name="io.github.DefectDojo/defectdojo-mcp"
 # eMudhra's roots stopped being trustworthy on 2026-10-20 (Mozilla bug 2083449). certifi 2026.10.19 (in uv.lock)
 # drops them for httpx, and this separate layer patches the system store for anything else that reads it.
 RUN apt-get update \
