@@ -26,7 +26,7 @@ Check that it starts:
 DEFECTDOJO_URL=https://defectdojo.example.com DEFECTDOJO_API_KEY=your-key uvx defectdojo-mcp-server --help
 ```
 
-The package on PyPI is `defectdojo-mcp-server`. A package named `defectdojo-mcp` also exists on PyPI, but it is an unrelated project, not this server.
+`defectdojo-mcp-server` is not on PyPI yet. Until it is, replace `uvx defectdojo-mcp-server` with `uvx --from git+https://github.com/DefectDojo/defectdojo-mcp defectdojo-mcp-server` in the commands and client configs below (in a config, `"args": ["--from", "git+https://github.com/DefectDojo/defectdojo-mcp", "defectdojo-mcp-server"]`), or use the [Docker image](#docker). A package named `defectdojo-mcp` on PyPI is an unrelated project, not this server.
 
 ### Claude Desktop
 
